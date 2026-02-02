@@ -55,15 +55,28 @@ def get_page(url: str, timeout: int = 10) -> str:
         return ""
 
 
+def is_article_url(href: str) -> bool:
+    """Filter out URLs that look like blog posts or news articles."""
+    article_signals = [
+        "news", "blog", "article", "post", "awarded", "announces",
+        "press-release", "press_release", "/20", "/19",  # dates like /2024/, /2019/
+        "update", "insight"
+    ]
+    href_lower = href.lower()
+    return any(signal in href_lower for signal in article_signals)
+
+
 def find_legal_links(html: str, base_url: str) -> dict:
     """
     Scan page for legal document links.
-    Returns dict of document_type -> URL string or "None"
+    PRIORITY: Link text matches > URL matches
+    FILTER: Skip obvious article/blog URLs
     """
     soup = BeautifulSoup(html, "html.parser")
     
-    # Initialize results
+    # Initialize results - two tiers: confirmed (link text) and maybe (URL only)
     results = {doc_type: "None" for doc_type in DOCUMENT_PATTERNS.keys()}
+    maybe_results = {doc_type: None for doc_type in DOCUMENT_PATTERNS.keys()}
     
     # Get all links
     all_links = soup.find_all("a", href=True)
@@ -82,22 +95,32 @@ def find_legal_links(html: str, base_url: str) -> dict:
         
         # Check each document type
         for doc_type, patterns in DOCUMENT_PATTERNS.items():
-            # Skip if already found
+            # Skip if already confirmed via link text
             if results[doc_type] != "None":
                 continue
-                
-            # Check if any pattern matches link text or href
+            
+            display_text = link.get_text(strip=True) or ""
+            
             for pattern in patterns:
-                pattern_slug = pattern.replace(" ", "-")
-                pattern_compact = pattern.replace(" ", "")
-                
-                if (pattern in link_text or 
-                    pattern_slug in href_lower or 
-                    pattern_compact in href_lower):
-                    # Format as clickable markdown link
-                    display_text = link.get_text(strip=True) or pattern.title()
+                # TIER 1: Link text matches (high confidence)
+                if pattern in link_text:
                     results[doc_type] = f"[{display_text}]({full_url})"
                     break
+                
+                # TIER 2: URL matches (only if not an article)
+                if maybe_results[doc_type] is None:
+                    pattern_slug = pattern.replace(" ", "-")
+                    pattern_compact = pattern.replace(" ", "")
+                    
+                    if (pattern_slug in href_lower or pattern_compact in href_lower):
+                        # Only accept if it doesn't look like an article
+                        if not is_article_url(href):
+                            maybe_results[doc_type] = f"[{display_text or pattern.title()}]({full_url})"
+    
+    # Fill in maybes only where we didn't find confirmed matches
+    for doc_type in results:
+        if results[doc_type] == "None" and maybe_results[doc_type]:
+            results[doc_type] = maybe_results[doc_type]
     
     return results
 
