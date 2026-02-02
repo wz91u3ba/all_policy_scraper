@@ -18,31 +18,31 @@ app = Flask(__name__)
 
 # Document types we're looking for
 DOCUMENT_TYPES = {
-    "A01_terms_and_conditions": [
+    "R01_terms_and_conditions": [
         "terms", "terms of service", "terms and conditions", "terms of use", 
         "tos", "user agreement", "service agreement"
     ],
-    "A02_privacy_policy": [
+    "R02_privacy_policy": [
         "privacy", "privacy policy", "privacy notice", "data policy",
         "data protection", "privacy statement"
     ],
-    "A03_ada_acc_statement": [
+    "R03_ada_acc_statement": [
         "accessibility", "ada", "accessibility statement", "wcag",
         "accessible", "disability", "a11y"
     ],
-    "A04_cookie_usage_policy": [
+    "R04_cookie_usage_policy": [
         "cookie", "cookies", "cookie policy", "cookie notice",
         "cookie preferences", "tracking"
     ],
-    "A05_ai_usage_policy_disclaimer": [
+    "R05_ai_usage_policy_disclaimer": [
         "ai policy", "ai disclaimer", "artificial intelligence", "ai usage",
         "machine learning", "automated decision", "ai disclosure"
     ],
-    "A06_refund_and_return_policy": [
+    "R06_refund_and_return_policy": [
         "refund", "return", "returns", "refund policy", "return policy",
         "money back", "cancellation", "exchange policy"
     ],
-    "A07_dmca_slash_copyright_policy": [
+    "R07_dmca_slash_copyright_policy": [
         "dmca", "copyright", "intellectual property", "ip policy",
         "copyright notice", "takedown", "infringement"
     ]
@@ -128,17 +128,17 @@ Document Content:
 {text_preview}
 
 Classify this document into ONE of these categories (or "unknown" if it doesn't fit):
-- A01_terms_and_conditions (Terms of Service, User Agreement, etc.)
-- A02_privacy_policy (Privacy Policy, Data Protection, etc.)
-- A03_ada_acc_statement (Accessibility Statement, ADA Compliance, WCAG)
-- A04_cookie_usage_policy (Cookie Policy, Tracking Notice)
-- A05_ai_usage_policy_disclaimer (AI Usage Policy, AI Disclosure)
-- A06_refund_and_return_policy (Refund Policy, Return Policy, Cancellation)
-- A07_dmca_slash_copyright_policy (DMCA, Copyright Policy, IP Policy)
+- R01_terms_and_conditions (Terms of Service, User Agreement, etc.)
+- R02_privacy_policy (Privacy Policy, Data Protection, etc.)
+- R03_ada_acc_statement (Accessibility Statement, ADA Compliance, WCAG)
+- R04_cookie_usage_policy (Cookie Policy, Tracking Notice)
+- R05_ai_usage_policy_disclaimer (AI Usage Policy, AI Disclosure)
+- R06_refund_and_return_policy (Refund Policy, Return Policy, Cancellation)
+- R07_dmca_slash_copyright_policy (DMCA, Copyright Policy, IP Policy)
 
 Return JSON only:
 {{
-    "category": "A0X_category_name or unknown",
+    "category": "R0X_category_name or unknown",
     "confidence": 0.0-1.0,
     "summary": "2-3 sentence summary of what this document covers"
 }}"""
