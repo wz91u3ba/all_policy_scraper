@@ -1,266 +1,142 @@
 """
-Legal Document Scraper for MinutePolicy Lead Qualification
-Scrapes a website, identifies legal documents, returns content as rich text.
-
-Deploy on Railway/Render, trigger via Make.com webhook from Airtable.
+Legal Document Scraper v2 - FAST VERSION
+Just finds links, doesn't overthink it.
+~3-5 seconds per site instead of 60+
 """
 
 import os
-import re
 import json
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 from flask import Flask, request, jsonify
-from anthropic import Anthropic
 
 app = Flask(__name__)
 
-# Document types we're looking for
-DOCUMENT_TYPES = {
+# Simple keyword matching - no AI needed for detection
+DOCUMENT_PATTERNS = {
     "R01_terms_and_conditions": [
-        "terms", "terms of service", "terms and conditions", "terms of use", 
-        "tos", "user agreement", "service agreement"
+        "terms of service", "terms and conditions", "terms of use", 
+        "terms & conditions", "user agreement", "tos", "terms"
     ],
     "R02_privacy_policy": [
-        "privacy", "privacy policy", "privacy notice", "data policy",
-        "data protection", "privacy statement"
+        "privacy policy", "privacy notice", "privacy statement", "privacy"
     ],
     "R03_ada_acc_statement": [
-        "accessibility", "ada", "accessibility statement", "wcag",
-        "accessible", "disability", "a11y"
+        "accessibility", "ada compliance", "accessibility statement", "wcag"
     ],
     "R04_cookie_usage_policy": [
-        "cookie", "cookies", "cookie policy", "cookie notice",
-        "cookie preferences", "tracking"
+        "cookie policy", "cookie notice", "cookies"
     ],
     "R05_ai_usage_policy_disclaimer": [
-        "ai policy", "ai disclaimer", "artificial intelligence", "ai usage",
-        "machine learning", "automated decision", "ai disclosure"
+        "ai policy", "ai disclaimer", "ai usage", "artificial intelligence policy"
     ],
     "R06_refund_and_return_policy": [
-        "refund", "return", "returns", "refund policy", "return policy",
-        "money back", "cancellation", "exchange policy"
+        "refund policy", "return policy", "refund & return", "returns", 
+        "money back", "cancellation policy"
     ],
     "R07_dmca_slash_copyright_policy": [
-        "dmca", "copyright", "intellectual property", "ip policy",
-        "copyright notice", "takedown", "infringement"
+        "dmca", "copyright policy", "copyright notice", "intellectual property"
     ]
 }
 
-# Keywords to find legal links in general
-LEGAL_KEYWORDS = [
-    "terms", "privacy", "legal", "policy", "cookie", "accessibility",
-    "refund", "return", "dmca", "copyright", "disclaimer", "ai",
-    "conditions", "notice", "compliance", "gdpr"
-]
 
-
-def get_page_content(url: str, timeout: int = 10) -> tuple[str, str]:
-    """Fetch a page and return (html, text) tuple."""
+def get_page(url: str, timeout: int = 10) -> str:
+    """Fetch a page, return HTML or empty string."""
     try:
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
-        response = requests.get(url, headers=headers, timeout=timeout)
+        response = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
         response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
-        
-        # Remove script and style elements
-        for element in soup(["script", "style", "nav", "header"]):
-            element.decompose()
-        
-        text = soup.get_text(separator="\n", strip=True)
-        return response.text, text
+        return response.text
     except Exception as e:
-        return "", ""
+        print(f"Failed to fetch {url}: {e}")
+        return ""
 
 
-def find_legal_links(html: str, base_url: str) -> list[dict]:
-    """Extract all potential legal document links from a page."""
+def find_legal_links(html: str, base_url: str) -> dict:
+    """
+    Scan page for legal document links.
+    Returns dict of document_type -> URL string or "None"
+    """
     soup = BeautifulSoup(html, "html.parser")
-    legal_links = []
-    seen_urls = set()
     
-    for link in soup.find_all("a", href=True):
-        href = link.get("href", "")
-        text = link.get_text(strip=True).lower()
+    # Initialize results
+    results = {doc_type: "None" for doc_type in DOCUMENT_PATTERNS.keys()}
+    
+    # Get all links
+    all_links = soup.find_all("a", href=True)
+    
+    for link in all_links:
+        href = link.get("href", "").strip()
+        link_text = link.get_text(strip=True).lower()
+        href_lower = href.lower()
+        
+        # Skip empty or javascript links
+        if not href or href.startswith("javascript:") or href == "#":
+            continue
         
         # Build absolute URL
         full_url = urljoin(base_url, href)
         
-        # Skip if already seen or external
-        if full_url in seen_urls:
-            continue
-        
-        # Check if link text or href contains legal keywords
-        href_lower = href.lower()
-        is_legal = any(
-            kw in text or kw in href_lower 
-            for kw in LEGAL_KEYWORDS
-        )
-        
-        if is_legal:
-            seen_urls.add(full_url)
-            legal_links.append({
-                "url": full_url,
-                "text": link.get_text(strip=True),
-                "href": href
-            })
+        # Check each document type
+        for doc_type, patterns in DOCUMENT_PATTERNS.items():
+            # Skip if already found
+            if results[doc_type] != "None":
+                continue
+                
+            # Check if any pattern matches link text or href
+            for pattern in patterns:
+                pattern_slug = pattern.replace(" ", "-")
+                pattern_compact = pattern.replace(" ", "")
+                
+                if (pattern in link_text or 
+                    pattern_slug in href_lower or 
+                    pattern_compact in href_lower):
+                    # Format as clickable markdown link
+                    display_text = link.get_text(strip=True) or pattern.title()
+                    results[doc_type] = f"[{display_text}]({full_url})"
+                    break
     
-    return legal_links
-
-
-def classify_document_with_ai(url: str, text: str, link_text: str) -> dict:
-    """Use Claude to classify which document type this is and extract key content."""
-    
-    client = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-    
-    # Truncate text to avoid token limits
-    text_preview = text[:8000] if len(text) > 8000 else text
-    
-    prompt = f"""Analyze this legal document and classify it.
-
-URL: {url}
-Link Text: {link_text}
-
-Document Content:
-{text_preview}
-
-Classify this document into ONE of these categories (or "unknown" if it doesn't fit):
-- R01_terms_and_conditions (Terms of Service, User Agreement, etc.)
-- R02_privacy_policy (Privacy Policy, Data Protection, etc.)
-- R03_ada_acc_statement (Accessibility Statement, ADA Compliance, WCAG)
-- R04_cookie_usage_policy (Cookie Policy, Tracking Notice)
-- R05_ai_usage_policy_disclaimer (AI Usage Policy, AI Disclosure)
-- R06_refund_and_return_policy (Refund Policy, Return Policy, Cancellation)
-- R07_dmca_slash_copyright_policy (DMCA, Copyright Policy, IP Policy)
-
-Return JSON only:
-{{
-    "category": "R0X_category_name or unknown",
-    "confidence": 0.0-1.0,
-    "summary": "2-3 sentence summary of what this document covers"
-}}"""
-
-    try:
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=500,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        
-        result_text = response.content[0].text
-        # Extract JSON from response
-        json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
-        if json_match:
-            return json.loads(json_match.group())
-    except Exception as e:
-        print(f"AI classification error: {e}")
-    
-    return {"category": "unknown", "confidence": 0, "summary": ""}
-
-
-def convert_to_rich_text(text: str, url: str, summary: str) -> str:
-    """Convert document content to Airtable-friendly rich text (Markdown)."""
-    
-    # Clean and truncate
-    clean_text = re.sub(r'\n{3,}', '\n\n', text)
-    truncated = clean_text[:5000] if len(clean_text) > 5000 else clean_text
-    
-    rich_text = f"""**Source:** [{url}]({url})
-
-**Summary:** {summary}
-
----
-
-{truncated}
-
-{"..." if len(clean_text) > 5000 else ""}
-"""
-    return rich_text
+    return results
 
 
 def scrape_legal_documents(target_url: str) -> dict:
     """Main function: scrape a URL and return all legal documents found."""
     
-    # Initialize results with "None" for all document types
-    results = {doc_type: "None" for doc_type in DOCUMENT_TYPES.keys()}
+    # Ensure URL has scheme
+    if not target_url.startswith("http"):
+        target_url = "https://" + target_url
+    
+    # Initialize results
+    results = {doc_type: "None" for doc_type in DOCUMENT_PATTERNS.keys()}
     results["_meta"] = {
         "url": target_url,
-        "links_found": 0,
-        "documents_identified": 0
+        "status": "pending"
     }
     
     # Fetch the main page
-    html, _ = get_page_content(target_url)
+    html = get_page(target_url)
+    
     if not html:
-        results["_meta"]["error"] = "Could not fetch main page"
+        results["_meta"]["status"] = "failed_to_fetch"
+        results["_meta"]["error"] = "Could not load the website"
         return results
     
-    # Find all legal links
-    legal_links = find_legal_links(html, target_url)
-    results["_meta"]["links_found"] = len(legal_links)
+    # Find legal links
+    found = find_legal_links(html, target_url)
+    results.update(found)
     
-    # Also check common legal page paths
-    common_paths = [
-        "/terms", "/terms-of-service", "/tos", "/terms-and-conditions",
-        "/privacy", "/privacy-policy",
-        "/accessibility", "/ada",
-        "/cookies", "/cookie-policy",
-        "/refund", "/refund-policy", "/returns",
-        "/dmca", "/copyright",
-        "/legal", "/policies"
-    ]
-    
-    parsed = urlparse(target_url)
-    base = f"{parsed.scheme}://{parsed.netloc}"
-    
-    for path in common_paths:
-        full_url = base + path
-        if full_url not in [l["url"] for l in legal_links]:
-            legal_links.append({
-                "url": full_url,
-                "text": path.strip("/").replace("-", " ").title(),
-                "href": path
-            })
-    
-    # Process each legal link
-    documents_found = 0
-    
-    for link in legal_links:
-        _, text = get_page_content(link["url"])
-        if not text or len(text) < 100:
-            continue
-        
-        # Classify with AI
-        classification = classify_document_with_ai(
-            link["url"], 
-            text, 
-            link["text"]
-        )
-        
-        category = classification.get("category", "unknown")
-        confidence = classification.get("confidence", 0)
-        summary = classification.get("summary", "")
-        
-        # Only accept if confidence is reasonable and category is valid
-        if category in DOCUMENT_TYPES and confidence >= 0.6:
-            # Don't overwrite if we already found this type (keep first/best)
-            if results[category] == "None":
-                results[category] = convert_to_rich_text(
-                    text, 
-                    link["url"],
-                    summary
-                )
-                documents_found += 1
-    
-    results["_meta"]["documents_identified"] = documents_found
+    # Count what we found
+    found_count = sum(1 for k, v in results.items() if k.startswith("R0") and v != "None")
+    results["_meta"]["status"] = "success"
+    results["_meta"]["documents_found"] = found_count
     
     return results
 
 
-# === API Endpoint for Make.com ===
+# === API Endpoints ===
 
 @app.route("/scrape", methods=["POST"])
 def scrape_endpoint():
@@ -271,10 +147,6 @@ def scrape_endpoint():
     
     if not url:
         return jsonify({"error": "No URL provided"}), 400
-    
-    # Ensure URL has scheme
-    if not url.startswith("http"):
-        url = "https://" + url
     
     try:
         results = scrape_legal_documents(url)
@@ -288,17 +160,16 @@ def health():
     return jsonify({"status": "ok"})
 
 
+# === CLI for testing ===
+
 if __name__ == "__main__":
-    # For local testing
     import sys
     
     if len(sys.argv) > 1:
-        # CLI mode: python legal_doc_scraper.py https://example.com
         test_url = sys.argv[1]
         print(f"Scraping: {test_url}\n")
         results = scrape_legal_documents(test_url)
         print(json.dumps(results, indent=2))
     else:
-        # Server mode
         port = int(os.environ.get("PORT", 5000))
         app.run(host="0.0.0.0", port=port)
