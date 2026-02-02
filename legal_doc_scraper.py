@@ -99,12 +99,10 @@ def find_legal_links(html: str, base_url: str) -> dict:
             if results[doc_type] != "None":
                 continue
             
-            display_text = link.get_text(strip=True) or ""
-            
             for pattern in patterns:
                 # TIER 1: Link text matches (high confidence)
                 if pattern in link_text:
-                    results[doc_type] = f"[{display_text}]({full_url})"
+                    results[doc_type] = full_url
                     break
                 
                 # TIER 2: URL matches (only if not an article)
@@ -115,7 +113,7 @@ def find_legal_links(html: str, base_url: str) -> dict:
                     if (pattern_slug in href_lower or pattern_compact in href_lower):
                         # Only accept if it doesn't look like an article
                         if not is_article_url(href):
-                            maybe_results[doc_type] = f"[{display_text or pattern.title()}]({full_url})"
+                            maybe_results[doc_type] = full_url
     
     # Fill in maybes only where we didn't find confirmed matches
     for doc_type in results:
